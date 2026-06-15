@@ -49,7 +49,7 @@ export class CanvasRenderer {
     const cssH = rect.height;
     this._canvas.width = cssW * dpr;
     this._canvas.height = cssH * dpr;
-    this._ctx.scale(dpr, dpr);
+    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._cssWidth = cssW;
     this._cssHeight = cssH;
     this._dpr = dpr;
@@ -99,7 +99,7 @@ export class CanvasRenderer {
     const dpr = window.devicePixelRatio || 1;
     this._canvas.width = cssWidth * dpr;
     this._canvas.height = cssHeight * dpr;
-    this._ctx.scale(dpr, dpr);
+    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._cssWidth = cssWidth;
     this._cssHeight = cssHeight;
     this._dpr = dpr;

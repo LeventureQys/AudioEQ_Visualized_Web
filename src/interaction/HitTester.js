@@ -16,7 +16,6 @@ export class HitTester {
    * @returns {{ kind: 'band'|'lpf'|'hpf'|null, index?: number }}
    */
   hitTest(cssX, cssY) {
-    const vp = this._mapper.viewport;
     const r = this._theme.bandRadius;
     const rx = this._theme.lpfEllipseRX;
     const ry = this._theme.lpfEllipseRY;
@@ -51,14 +50,22 @@ export class HitTester {
       }
     }
 
-    // Check LPF/HPF ellipses
-    // LPF: top-right of viewport
-    const lpfHits = this._hitTestEllipse(cssX, cssY, vp.x + vp.width - rx - 4, vp.y + ry + 4, rx, ry);
-    if (lpfHits) return { kind: 'lpf' };
+    // Check LPF/HPF ellipses on 0dB line at cutoff frequencies (always hittable)
+    const lpf = this._model.getLpf();
+    if (lpf) {
+      const lpfX = this._mapper.freqToX(lpf.frequency);
+      const lpfY = this._mapper.gainToY(0);
+      const lpfHits = this._hitTestEllipse(cssX, cssY, lpfX, lpfY, rx, ry);
+      if (lpfHits) return { kind: 'lpf' };
+    }
 
-    // HPF: top-left of viewport
-    const hpfHits = this._hitTestEllipse(cssX, cssY, vp.x + rx + 4, vp.y + ry + 4, rx, ry);
-    if (hpfHits) return { kind: 'hpf' };
+    const hpf = this._model.getHpf();
+    if (hpf) {
+      const hpfX = this._mapper.freqToX(hpf.frequency);
+      const hpfY = this._mapper.gainToY(0);
+      const hpfHits = this._hitTestEllipse(cssX, cssY, hpfX, hpfY, rx, ry);
+      if (hpfHits) return { kind: 'hpf' };
+    }
 
     return { kind: null };
   }

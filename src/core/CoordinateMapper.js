@@ -79,4 +79,26 @@ export class CoordinateMapper {
   get gainMax() { return this._gainMax; }
   /** @returns {Readonly<Viewport>} */
   get viewport() { return { ...this._vp }; }
+
+  /**
+   * Generate nice 1-2-5 freq ticks within [freqMin, freqMax].
+   * @param {number} freqMin
+   * @param {number} freqMax
+   * @returns {number[]}
+   */
+  static generateFreqTicks(freqMin, freqMax) {
+    const ticks = [];
+    const steps = [1, 2, 5];
+    let decade = 1;
+    while (decade <= freqMax) {
+      for (const step of steps) {
+        const val = step * decade;
+        if (val >= freqMin && val <= freqMax) {
+          ticks.push(val);
+        }
+      }
+      decade *= 10;
+    }
+    return ticks;
+  }
 }

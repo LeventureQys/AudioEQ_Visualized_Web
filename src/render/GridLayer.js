@@ -1,3 +1,5 @@
+import { CoordinateMapper } from '../core/CoordinateMapper.js';
+
 export class GridLayer {
   /**
    * @param {import('../core/CoordinateMapper.js').CoordinateMapper} mapper
@@ -20,8 +22,8 @@ export class GridLayer {
     // ---- Grid lines ----
     ctx.lineWidth = 1;
 
-    // Frequency vertical lines (from Defaults.FREQ_TICKS)
-    const freqTicks = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    // Frequency vertical lines (dynamic from mapper range)
+    const freqTicks = CoordinateMapper.generateFreqTicks(this._mapper.freqMin, this._mapper.freqMax);
     ctx.strokeStyle = theme.gridColor;
     ctx.beginPath();
     for (const freq of freqTicks) {
@@ -41,7 +43,7 @@ export class GridLayer {
     // ---- 0dB highlighted line ----
     const y0 = this._mapper.gainToY(0);
     ctx.strokeStyle = theme.zeroDbColor;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = theme.zeroDbLineWidth;
     ctx.beginPath();
     ctx.moveTo(vp.x, y0);
     ctx.lineTo(vp.x + vp.width, y0);

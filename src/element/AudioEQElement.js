@@ -14,7 +14,7 @@ const MODEL_EVENTS = [
 
 const CURVE_TRIGGERS = [
   'model-reset', 'band-changed', 'band-added', 'band-removed',
-  'band-count-changed', 'focused-band-changed', 'sample-rate-changed',
+  'band-count-changed', 'focused-band-changed',
   'lpf-changed', 'hpf-changed',
 ];
 
@@ -39,7 +39,7 @@ export class AudioEQElement extends BaseHTMLElement {
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; min-width: 200px; min-height: 100px; }
+        :host { display: block; min-width: 200px; min-height: 100px; height: 300px; }
         :host([hidden]) { display: none; }
         canvas { width: 100%; height: 100%; display: block; }
       </style>
@@ -129,7 +129,23 @@ export class AudioEQElement extends BaseHTMLElement {
       this._model.addEventListener(name, this._onCurveTrigger);
     }
 
+    this._model.addEventListener('sample-rate-changed', () => {
+      this._updateFrequencyRange();
+      this._recomputeCurve();
+    });
+
+    this._updateFrequencyRange();
     this._recomputeCurve();
+  }
+
+  _updateFrequencyRange() {
+    const sr = this._model ? this._model.sampleRate() : Defaults.SAMPLE_RATE;
+    const nyquist = sr / 2;
+    const freqMax = Math.min(nyquist, 240000);
+    this._curveEngine.setFreqRange(Defaults.FREQ_MIN, freqMax);
+    if (this._renderer && this._renderer._mapper) {
+      this._renderer._mapper.setFreqRange(Defaults.FREQ_MIN, freqMax);
+    }
   }
 
   _setupResizeObserver() {

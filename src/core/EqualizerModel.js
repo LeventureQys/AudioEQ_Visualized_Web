@@ -22,14 +22,25 @@ export class EqualizerModel extends EventTarget {
 
   _initDefaultBands() {
     const N = Defaults.BAND_COUNT;
-    const freqMin = Defaults.FREQ_MIN;
-    const freqMax = Defaults.FREQ_MAX;
+    const freqs = this._computeBandFrequencies(N);
     for (let i = 0; i < N; i++) {
-      const freq = freqMin * Math.pow(freqMax / freqMin, i / (N - 1));
-      const band = createBand({ frequency: Math.round(freq) });
+      const band = createBand({ frequency: freqs[i] });
       band.index = i;
       this._bands.set(i, band);
     }
+  }
+
+  _computeBandFrequencies(count, freqMin = Defaults.FREQ_MIN, freqMax = Defaults.FREQ_MAX) {
+    if (count <= 0) return [];
+    // Distribute bands geometrically within the range,
+    // leaving one step of padding on each side for HPF/LPF handles
+    const gaps = count + 1;
+    const ratio = Math.pow(freqMax / freqMin, 1 / gaps);
+    const freqs = new Array(count);
+    for (let i = 0; i < count; i++) {
+      freqs[i] = Math.round(freqMin * Math.pow(ratio, i + 1));
+    }
+    return freqs;
   }
 
   _cloneBand(band) {
@@ -44,12 +55,10 @@ export class EqualizerModel extends EventTarget {
     if (count === oldCount) return;
     if (count < 0) throw new Error('Invalid band count');
 
-    const freqMin = Defaults.FREQ_MIN;
-    const freqMax = Defaults.FREQ_MAX;
     this._bands.clear();
+    const freqs = this._computeBandFrequencies(count);
     for (let i = 0; i < count; i++) {
-      const freq = freqMin * Math.pow(freqMax / freqMin, i / (count - 1));
-      const band = createBand({ frequency: Math.round(freq) });
+      const band = createBand({ frequency: freqs[i] });
       band.index = i;
       this._bands.set(i, band);
     }
@@ -154,14 +163,19 @@ export class EqualizerModel extends EventTarget {
   getLpf() { return { ...this._lpf }; }
 
   setLpf({ frequency, enabled }) {
-    if (frequency !== undefined) this._lpf.frequency = frequency;
+    if (frequency !== undefined) {
+      this._lpf.frequency = Math.max(Defaults.FREQ_MIN, Math.min(Defaults.FREQ_MAX, frequency));
+    }
     if (enabled !== undefined) this._lpf.enabled = enabled;
     this.dispatchEvent(new CustomEvent('lpf-changed', { detail: { ...this._lpf } }));
   }
 
   setLpfFrequency(freq) {
-    if (this._lpf.frequency === freq) return;
-    this._lpf.frequency = freq;
+    const clamped = Math.max(Defaults.FREQ_MIN, Math.min(Defaults.FREQ_MAX, freq));
+    const atEdge = clamped >= Defaults.FREQ_MAX - 1;
+    if (this._lpf.frequency === clamped && this._lpf.enabled === !atEdge) return;
+    this._lpf.frequency = clamped;
+    this._lpf.enabled = !atEdge;
     this.dispatchEvent(new CustomEvent('lpf-changed', { detail: { ...this._lpf } }));
   }
 
@@ -175,14 +189,19 @@ export class EqualizerModel extends EventTarget {
   getHpf() { return { ...this._hpf }; }
 
   setHpf({ frequency, enabled }) {
-    if (frequency !== undefined) this._hpf.frequency = frequency;
+    if (frequency !== undefined) {
+      this._hpf.frequency = Math.max(Defaults.FREQ_MIN, Math.min(Defaults.FREQ_MAX, frequency));
+    }
     if (enabled !== undefined) this._hpf.enabled = enabled;
     this.dispatchEvent(new CustomEvent('hpf-changed', { detail: { ...this._hpf } }));
   }
 
   setHpfFrequency(freq) {
-    if (this._hpf.frequency === freq) return;
-    this._hpf.frequency = freq;
+    const clamped = Math.max(Defaults.FREQ_MIN, Math.min(Defaults.FREQ_MAX, freq));
+    const atEdge = clamped <= Defaults.FREQ_MIN + 1;
+    if (this._hpf.frequency === clamped && this._hpf.enabled === !atEdge) return;
+    this._hpf.frequency = clamped;
+    this._hpf.enabled = !atEdge;
     this.dispatchEvent(new CustomEvent('hpf-changed', { detail: { ...this._hpf } }));
   }
 

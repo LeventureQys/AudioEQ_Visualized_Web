@@ -54,7 +54,7 @@ export function createBand({
   return { index: -1, frequency, gain, q, type, bypass };
 }
 
-/** @type {Readonly<{BAND_COUNT: number, SAMPLE_RATE: number, GAIN_MIN: number, GAIN_MAX: number, FREQ_MIN: number, FREQ_MAX: number, POINT_COUNT: number, LPF_FREQ_DEFAULT: number, HPF_FREQ_DEFAULT: number, FREQ_TICKS: number[]}>} */
+/** @type {Readonly<{BAND_COUNT: number, SAMPLE_RATE: number, GAIN_MIN: number, GAIN_MAX: number, FREQ_MIN: number, FREQ_MAX: number, POINT_COUNT: number, LPF_FREQ_DEFAULT: number, HPF_FREQ_DEFAULT: number}>} */
 export const Defaults = Object.freeze({
   BAND_COUNT: 5,
   SAMPLE_RATE: 48000,

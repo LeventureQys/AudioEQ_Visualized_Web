@@ -82,31 +82,30 @@ export class HandleLayer {
   _drawFilterHandle(ctx, filter, label, theme, mapper, rx, ry) {
     if (!filter) return;
 
-    // Position LPF/HPF at the top-right (LPF) or top-left (HPF) of the viewport
-    const vp = mapper.viewport;
-    let x, y;
-    if (label === 'LPF') {
-      x = vp.x + vp.width - rx - 4;
-      y = vp.y + ry + 4;
-    } else {
-      x = vp.x + rx + 4;
-      y = vp.y + ry + 4;
-    }
+    const x = mapper.freqToX(filter.frequency);
+    const y = mapper.gainToY(0);
 
     ctx.save();
 
-    // Ellipse
+    // Ellipse on 0dB line at cutoff frequency
     ctx.beginPath();
     ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = theme.bandFill;
-    ctx.fill();
-    ctx.strokeStyle = filter.enabled ? theme.curveColor : theme.bandStroke;
-    ctx.lineWidth = filter.enabled ? 1.5 : 1;
+    if (filter.enabled) {
+      ctx.fillStyle = theme.bandFill;
+      ctx.fill();
+      ctx.strokeStyle = theme.zeroDbColor;
+      ctx.lineWidth = 2;
+    } else {
+      ctx.fillStyle = theme.filterDisabledFill;
+      ctx.fill();
+      ctx.strokeStyle = theme.filterDisabledStroke;
+      ctx.lineWidth = 1;
+    }
     ctx.stroke();
 
-    // Label text
+    // Label text centered on ellipse (smaller font for filter handles)
     ctx.fillStyle = theme.labelColor;
-    ctx.font = `bold ${theme.labelFontSize}px system-ui, sans-serif`;
+    ctx.font = `bold ${theme.filterLabelFontSize}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, x, y);

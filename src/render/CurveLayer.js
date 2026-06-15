@@ -55,10 +55,11 @@ export class CurveLayer {
           const y = clampY(this._mapper.gainToY(pts[i].gainDb));
           ctx.lineTo(x, y);
         }
-        // Close at bottom
+        // Close at 0dB line
         const lastX = this._mapper.freqToX(pts[pts.length - 1].freq);
-        ctx.lineTo(lastX, vp.y + vp.height);
-        ctx.lineTo(firstX, vp.y + vp.height);
+        const zeroDbY = clampY(this._mapper.gainToY(0));
+        ctx.lineTo(lastX, zeroDbY);
+        ctx.lineTo(firstX, zeroDbY);
         ctx.closePath();
         ctx.fillStyle = theme.fillColor;
         ctx.fill();
@@ -73,7 +74,9 @@ export class CurveLayer {
         }
         ctx.strokeStyle = theme.curveColor;
         ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
         ctx.stroke();
+        ctx.setLineDash([]);
 
         ctx.restore();
       }
@@ -94,6 +97,7 @@ export class CurveLayer {
       }
       ctx.strokeStyle = theme.curveColor;
       ctx.lineWidth = theme.curveLineWidth;
+      ctx.setLineDash([]);
       ctx.stroke();
       ctx.restore();
     }

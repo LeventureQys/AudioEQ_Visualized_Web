@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { EqualizerModel } from '../../src/core/EqualizerModel.js';
+import { Defaults } from '../../src/core/types.js';
 
 describe('EqualizerModel', () => {
   let model;
@@ -137,6 +138,26 @@ describe('EqualizerModel', () => {
       model.addEventListener('lpf-changed', () => { count++; });
       model.setLpfEnabled(false);
       expect(count).toBe(0);
+    });
+
+    it('should auto-enable LPF when frequency moves away from edge', () => {
+      model.setLpfFrequency(10000);
+      expect(model.getLpf().enabled).toBe(true);
+    });
+
+    it('should auto-disable LPF when frequency reaches max edge', () => {
+      model.setLpfFrequency(Defaults.FREQ_MAX);
+      expect(model.getLpf().enabled).toBe(false);
+    });
+
+    it('should auto-enable HPF when frequency moves away from edge', () => {
+      model.setHpfFrequency(1000);
+      expect(model.getHpf().enabled).toBe(true);
+    });
+
+    it('should auto-disable HPF when frequency reaches min edge', () => {
+      model.setHpfFrequency(Defaults.FREQ_MIN);
+      expect(model.getHpf().enabled).toBe(false);
     });
 
     it('should emit hpf-changed on setHpfFrequency', () => {

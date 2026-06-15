@@ -67,6 +67,8 @@ describe('CurveEngine', () => {
     it('should return 0 gain for all-bypass bands', () => {
       const engine = new CurveEngine({ pointCount: 50 });
       const model = new EqualizerModel();
+      model.setLpfEnabled(false);
+      model.setHpfEnabled(false);
       for (let i = 0; i < 5; i++) {
         model.setBandParams(i, { bypass: true });
       }
@@ -80,6 +82,7 @@ describe('CurveEngine', () => {
       const engine = new CurveEngine({ pointCount: 100, freqMin: 20, freqMax: 20000 });
       const model = new EqualizerModel();
       model.setBandCount(0);
+      model.setHpfEnabled(false);
       model.setLpfEnabled(true);
       model.setLpfFrequency(1000);
 
