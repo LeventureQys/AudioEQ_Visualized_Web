@@ -75,12 +75,12 @@ console.log(curve); // [{freq, gainDb}, ...]
 | Attribute | Property | Type | Default | Description |
 |-----------|----------|------|---------|-------------|
 | `sample-rate` | `sampleRate` | number | 48000 | Audio sample rate (Hz) |
-| `curve-color` | (theme) | string | `#F0A030` | Curve color |
-| `background-color` | (theme) | string | `#262A33` | Background color |
-| `band-color` | (theme) | string | `#262A33` | Band handle fill color |
-| `gain-min` | (mapper) | number | -24 | Minimum gain display (dB) |
-| `gain-max` | (mapper) | number | 12 | Maximum gain display (dB) |
-| `point-count` | (pointCount) | number | 500 | Curve resolution (points) |
+| `curve-color` | `curveColor` | string | `#F0A030` | Curve color |
+| `background-color` | `backgroundColor` | string | `#262A33` | Background color |
+| `band-color` | `bandColor` | string | `#262A33` | Band handle fill color |
+| `gain-min` | `gainMin` | number | -24 | Minimum gain display (dB) |
+| `gain-max` | `gainMax` | number | 12 | Maximum gain display (dB) |
+| `point-count` | `pointCount` | number | 500 | Curve resolution (points) |
 
 ### CSS Variables
 
@@ -89,18 +89,28 @@ console.log(curve); // [{freq, gainDb}, ...]
 --audio-eq-bg-color: #262A33;
 --audio-eq-grid-color: rgba(255,255,255,0.08);
 --audio-eq-label-color: rgba(255,255,255,0.7);
+--audio-eq-band-color: #262A33;
+--audio-eq-axis-color: rgba(255,255,255,0.6);
+--audio-eq-zero-db-color: rgba(255,255,255,0.35);
 ```
+
+Explicit color attributes take precedence over `setTheme()` overrides and CSS variables. Removing an attribute restores the lower-priority color.
 
 ### Methods
 
 ```js
 // Band management
-element.bandCount()                    // → number
-element.setBandCount(n)                // reset to n default bands
+element.bandCount                       // → number
+element.setBandCount(n)                 // reset to n default bands
 element.addBand({ frequency, gain, q, type, bypass })  // → index
 element.removeBand(index)
 element.bandAt(index)                  // → { index, frequency, gain, q, type, bypass }
 element.setBandParams(index, params)
+element.setBandFrequency(index, hz)
+element.setBandGain(index, db)
+element.setBandQ(index, q)
+element.setBandType(index, type)
+element.setBandBypass(index, bypass)
 element.allBands()                     // → frozen Band[]
 
 // Focus
@@ -128,8 +138,12 @@ element.setQRange(type, min, max)
 element.qRange(type)                   // → { min, max }
 
 // Visual
+element.setGainRange(-24, 12)
+element.setCurvePointCount(500)
+element.setFrequencyVisibleRange(20, 20000)
 element.setTheme(partial)
 element.renderNow()
+element.reset()
 ```
 
 ### Events
@@ -160,9 +174,11 @@ Chrome, Edge, Firefox (latest 2 versions), Safari 15+. Zero polyfills required.
 
 ## Development
 
+The `<audio-eq>` element owns its canvas, model and interaction only. The standalone demo lives in `examples/simple-demo/`: `style.css` defines the workbench, `bands.js` owns the band table, `controls.js` binds the parameter panels, and `main.js` composes them. Embedding the element does not add the demo UI.
+
 ```bash
 npm install
-npm run dev     # Start Vite dev server with demo
+npm run dev     # Open /examples/simple-demo/index.html on the Vite server
 npm run build   # Build ESM + UMD bundles
 npm run test    # Run unit tests
 npm run lint    # ESLint

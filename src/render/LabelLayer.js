@@ -35,9 +35,9 @@ export class LabelLayer {
     // ---- Gain labels ----
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    for (let g = -24; g <= 12; g += 6) {
-      const label = g > 0 ? `${g}` : `${g}`;
-      const y = this._mapper.gainToY(g);
+    for (let gain = Math.ceil(this._mapper.gainMin / 6) * 6; gain <= this._mapper.gainMax; gain += 6) {
+      const label = String(gain);
+      const y = this._mapper.gainToY(gain);
       const x = vp.x - 4;
       ctx.fillText(label, x, y);
     }

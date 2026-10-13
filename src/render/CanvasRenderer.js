@@ -67,14 +67,19 @@ export class CanvasRenderer {
   }
 
   _setupDprListener() {
-    const dpr = window.devicePixelRatio || 1;
-    const mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    let mediaQuery;
     const handler = () => {
       if (this._destroyed) return;
+      mediaQuery.removeEventListener('change', handler);
       this.resize(this._cssWidth, this._cssHeight);
+      subscribe();
     };
-    mq.addEventListener('change', handler);
-    this._cleanupDpr = () => mq.removeEventListener('change', handler);
+    const subscribe = () => {
+      mediaQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      mediaQuery.addEventListener('change', handler);
+    };
+    subscribe();
+    this._cleanupDpr = () => mediaQuery.removeEventListener('change', handler);
   }
 
   _setupModelListeners() {

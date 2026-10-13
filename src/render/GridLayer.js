@@ -33,8 +33,8 @@ export class GridLayer {
     }
 
     // Gain horizontal lines every 6dB
-    for (let g = -24; g <= 12; g += 6) {
-      const y = this._mapper.gainToY(g);
+    for (let gain = Math.ceil(this._mapper.gainMin / 6) * 6; gain <= this._mapper.gainMax; gain += 6) {
+      const y = this._mapper.gainToY(gain);
       ctx.moveTo(vp.x, y);
       ctx.lineTo(vp.x + vp.width, y);
     }

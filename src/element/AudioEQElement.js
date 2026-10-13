@@ -1,41 +1,93 @@
-// @ts-nocheck
 import { EqualizerModel } from '../core/EqualizerModel.js';
 import { CurveEngine } from '../core/CurveEngine.js';
 import { CanvasRenderer } from '../render/CanvasRenderer.js';
 import { HitTester } from '../interaction/HitTester.js';
 import { DragController } from '../interaction/DragController.js';
-import { Defaults } from '../core/types.js';
+import { Defaults, ErrorCode } from '../core/types.js';
+import { Theme } from '../render/theme.js';
 
 const MODEL_EVENTS = [
-  'band-changed', 'band-added', 'band-removed', 'band-count-changed',
-  'focused-band-changed', 'sample-rate-changed', 'lpf-changed',
-  'hpf-changed', 'model-reset',
+  'band-changed',
+  'band-added',
+  'band-removed',
+  'band-count-changed',
+  'focused-band-changed',
+  'sample-rate-changed',
+  'lpf-changed',
+  'hpf-changed',
+  'model-reset',
 ];
-
 const CURVE_TRIGGERS = [
-  'model-reset', 'band-changed', 'band-added', 'band-removed',
-  'band-count-changed', 'focused-band-changed',
-  'lpf-changed', 'hpf-changed',
+  'model-reset',
+  'band-changed',
+  'band-added',
+  'band-removed',
+  'band-count-changed',
+  'focused-band-changed',
+  'lpf-changed',
+  'hpf-changed',
 ];
+const COLOR_ATTRIBUTES = {
+  'curve-color': 'curveColor',
+  'background-color': 'background',
+  'band-color': 'bandFill',
+};
+const CSS_COLORS = {
+  '--audio-eq-curve-color': 'curveColor',
+  '--audio-eq-bg-color': 'background',
+  '--audio-eq-band-color': 'bandFill',
+  '--audio-eq-grid-color': 'gridColor',
+  '--audio-eq-label-color': 'labelColor',
+  '--audio-eq-axis-color': 'axisColor',
+  '--audio-eq-zero-db-color': 'zeroDbColor',
+};
 
-const BaseHTMLElement = (typeof window !== 'undefined' && typeof customElements !== 'undefined')
-  ? HTMLElement
-  : class {};
+function invalidParameter(message) {
+  return new Error(message, { cause: { code: ErrorCode.INVALID_PARAMETER } });
+}
+
+function finiteNumber(value, name) {
+  const number = Number(value);
+  if (value === null || value === '' || !Number.isFinite(number)) {
+    throw invalidParameter(`${name} must be a finite number`);
+  }
+  return number;
+}
+
+const BaseHTMLElement = /** @type {typeof HTMLElement} */ (
+  /** @type {unknown} */ (typeof HTMLElement === 'undefined' ? class {} : HTMLElement)
+);
 
 export class AudioEQElement extends BaseHTMLElement {
   static get observedAttributes() {
     return [
-      'sample-rate', 'curve-color', 'background-color', 'band-color',
-      'gain-min', 'gain-max', 'point-count',
+      'sample-rate',
+      'curve-color',
+      'background-color',
+      'band-color',
+      'gain-min',
+      'gain-max',
+      'point-count',
     ];
   }
 
   constructor() {
     super();
-    if (typeof window === 'undefined' || typeof customElements === 'undefined') {
-      return;
-    }
+    this._model = null;
+    this._curveEngine = null;
+    this._renderer = null;
+    this._dragController = null;
+    this._resizeObserver = null;
+    this._initialized = false;
+    this._connectionToken = 0;
+    this._reflecting = false;
+    this._themeOverrides = {};
+    this._frequencyRange = null;
+    this._forwardModelEvent = this._forwardModelEvent.bind(this);
+    this._onCurveTrigger = this._onCurveTrigger.bind(this);
+    this._onSampleRateChange = this._onSampleRateChange.bind(this);
 
+    if (typeof document === 'undefined') return;
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.innerHTML = `
       <style>
@@ -43,71 +95,110 @@ export class AudioEQElement extends BaseHTMLElement {
         :host([hidden]) { display: none; }
         canvas { width: 100%; height: 100%; display: block; }
       </style>
-      <canvas></canvas>
+      <canvas aria-label="Audio equalizer frequency response"></canvas>
     `;
-
     this._canvas = this.shadowRoot.querySelector('canvas');
-    this._model = null;
-    this._curveEngine = null;
-    this._renderer = null;
-    this._dragController = null;
-    this._resizeObserver = null;
-    this._initialized = false;
-
-    this._forwardModelEvent = this._forwardModelEvent.bind(this);
-    this._onCurveTrigger = this._onCurveTrigger.bind(this);
   }
 
   connectedCallback() {
-    if (typeof window === 'undefined') return;
     if (this._initialized) return;
-
+    const token = ++this._connectionToken;
     Promise.resolve().then(() => {
-      if (!this.isConnected) return;
+      if (!this.isConnected || this._initialized || token !== this._connectionToken) return;
       this._initComponents();
       this._setupResizeObserver();
-      this._applyCssColorHooks();
       this._initialized = true;
     });
   }
 
   disconnectedCallback() {
-    this._teardownResizeObserver();
-    this._teardownDragController();
-    this._teardownRenderer();
-    this._teardownModel();
+    ++this._connectionToken;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
+    this._dragController?.detach();
+    this._dragController = null;
+    this._renderer?.destroy();
+    this._renderer = null;
+    if (this._model) {
+      for (const name of MODEL_EVENTS)
+        this._model.removeEventListener(name, this._forwardModelEvent);
+      for (const name of CURVE_TRIGGERS)
+        this._model.removeEventListener(name, this._onCurveTrigger);
+      this._model.removeEventListener('sample-rate-changed', this._onSampleRateChange);
+    }
+    this._model = null;
+    this._curveEngine = null;
     this._initialized = false;
   }
 
-  attributeChangedCallback(name, oldVal, newVal) {
-    if (oldVal === newVal || !this._initialized) return;
-    this._attributeToProperty(name, newVal);
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (oldValue === newValue || this._reflecting || !this._initialized) return;
+    try {
+      if (name === 'sample-rate') {
+        const rate = newValue === null ? Defaults.SAMPLE_RATE : this._validSampleRate(newValue);
+        if (this._frequencyRange && this._frequencyRange.max > rate / 2) {
+          throw invalidParameter('visible frequency range exceeds Nyquist');
+        }
+        this._model.setSampleRate(rate);
+      } else if (name === 'point-count') {
+        this._curveEngine.setPointCount(
+          newValue === null ? Defaults.POINT_COUNT : this._validPointCount(newValue),
+        );
+        this._recomputeCurve();
+      } else if (name === 'gain-min' || name === 'gain-max') {
+        this._applyGainRange();
+      } else {
+        this._syncTheme();
+      }
+    } catch (error) {
+      this._reflecting = true;
+      try {
+        if (oldValue === null) this.removeAttribute(name);
+        else this.setAttribute(name, oldValue);
+      } finally {
+        this._reflecting = false;
+      }
+      throw error;
+    }
   }
 
-  // ========== Initialization ==========
+  _validSampleRate(value) {
+    const rate = finiteNumber(value, 'sample-rate');
+    if (rate <= Defaults.FREQ_MIN * 2) throw invalidParameter('sample-rate is too low');
+    return rate;
+  }
+
+  _validPointCount(value) {
+    const count = finiteNumber(value, 'point-count');
+    if (!Number.isInteger(count) || count < 2)
+      throw invalidParameter('point-count must be an integer >= 2');
+    return count;
+  }
+
+  _reflect(name, value) {
+    this._reflecting = true;
+    try {
+      this.setAttribute(name, String(value));
+    } finally {
+      this._reflecting = false;
+    }
+  }
 
   _initComponents() {
     this._model = new EqualizerModel();
+    const rate = this.getAttribute('sample-rate');
+    if (rate !== null) this._model.setSampleRate(this._validSampleRate(rate));
+    const points = this.getAttribute('point-count');
     this._curveEngine = new CurveEngine({
-      pointCount: parseInt(this.getAttribute('point-count'), 10) || Defaults.POINT_COUNT,
+      pointCount: points === null ? Defaults.POINT_COUNT : this._validPointCount(points),
       freqMin: Defaults.FREQ_MIN,
       freqMax: Defaults.FREQ_MAX,
     });
-
-    const sr = this.getAttribute('sample-rate');
-    if (sr) this._model.setSampleRate(parseInt(sr, 10));
-
     this._renderer = new CanvasRenderer(this._canvas, this._model);
-    this._applyThemeAttributes();
+    this._syncTheme();
+    this._applyGainRange();
 
-    this._applyInitialGainRange();
-
-    const hitTester = new HitTester(
-      this._model,
-      this._renderer._mapper,
-      this._renderer._theme,
-    );
-
+    const hitTester = new HitTester(this._model, this._renderer._mapper, this._renderer._theme);
     this._dragController = new DragController(
       this._canvas,
       this._model,
@@ -116,343 +207,332 @@ export class AudioEQElement extends BaseHTMLElement {
       this._renderer._theme,
     );
     this._dragController.attach();
-
-    this._dragController.addEventListener('band-dragged', (e) => {
-      this.dispatchEvent(new CustomEvent('band-dragged', { detail: e.detail }));
+    this._dragController.addEventListener('band-dragged', (event) => {
+      this.dispatchEvent(
+        new CustomEvent('band-dragged', { detail: /** @type {CustomEvent} */ (event).detail }),
+      );
     });
-
-    for (const name of MODEL_EVENTS) {
-      this._model.addEventListener(name, this._forwardModelEvent);
-    }
-
-    for (const name of CURVE_TRIGGERS) {
-      this._model.addEventListener(name, this._onCurveTrigger);
-    }
-
-    this._model.addEventListener('sample-rate-changed', () => {
-      this._updateFrequencyRange();
-      this._recomputeCurve();
-    });
-
+    this._model.addEventListener('sample-rate-changed', this._onSampleRateChange);
     this._updateFrequencyRange();
+    for (const name of MODEL_EVENTS) this._model.addEventListener(name, this._forwardModelEvent);
+    for (const name of CURVE_TRIGGERS) this._model.addEventListener(name, this._onCurveTrigger);
     this._recomputeCurve();
-  }
-
-  _updateFrequencyRange() {
-    const sr = this._model ? this._model.sampleRate() : Defaults.SAMPLE_RATE;
-    const nyquist = sr / 2;
-    const freqMax = Math.min(nyquist, 240000);
-    this._curveEngine.setFreqRange(Defaults.FREQ_MIN, freqMax);
-    if (this._renderer && this._renderer._mapper) {
-      this._renderer._mapper.setFreqRange(Defaults.FREQ_MIN, freqMax);
-    }
   }
 
   _setupResizeObserver() {
     this._resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        let w, h;
-        if (entry.contentBoxSize) {
-          w = entry.contentBoxSize[0].inlineSize;
-          h = entry.contentBoxSize[0].blockSize;
-        } else {
-          w = entry.contentRect.width;
-          h = entry.contentRect.height;
-        }
-        if (this._renderer && w > 0 && h > 0) {
-          this._renderer.resize(Math.round(w), Math.round(h));
+        const box = Array.isArray(entry.contentBoxSize)
+          ? entry.contentBoxSize[0]
+          : entry.contentBoxSize;
+        const width = box?.inlineSize ?? entry.contentRect.width;
+        const height = box?.blockSize ?? entry.contentRect.height;
+        if (this._renderer && width > 0 && height > 0) {
+          this._renderer.resize(Math.round(width), Math.round(height));
         }
       }
     });
     this._resizeObserver.observe(this);
   }
 
-  _applyThemeAttributes() {
-    const curveColor = this.getAttribute('curve-color');
-    const bgColor = this.getAttribute('background-color');
-    const bandColor = this.getAttribute('band-color');
-    const partial = {};
-    if (curveColor) partial.curveColor = curveColor;
-    if (bgColor) partial.background = bgColor;
-    if (bandColor) partial.bandFill = bandColor;
-    if (Object.keys(partial).length > 0) {
-      this._renderer.setTheme(partial);
-    }
-  }
-
-  _applyCssColorHooks() {
+  _syncTheme() {
     if (!this._renderer) return;
     const style = getComputedStyle(this);
-    const partial = {};
-    const curveColor = style.getPropertyValue('--curve-color').trim();
-    const bgColor = style.getPropertyValue('--background-color').trim();
-    const bandColor = style.getPropertyValue('--band-color').trim();
-    if (curveColor) partial.curveColor = curveColor;
-    if (bgColor) partial.background = bgColor;
-    if (bandColor) partial.bandFill = bandColor;
-    if (Object.keys(partial).length > 0) {
-      this._renderer.setTheme(partial);
+    const colors = {};
+    for (const [variable, key] of Object.entries(CSS_COLORS)) {
+      const color = style.getPropertyValue(variable).trim();
+      if (color) colors[key] = color;
     }
+    Object.assign(colors, this._themeOverrides);
+    for (const [attribute, key] of Object.entries(COLOR_ATTRIBUTES)) {
+      const color = this.getAttribute(attribute);
+      if (color) colors[key] = color;
+    }
+    this._renderer.setTheme({ ...Theme, ...colors });
   }
 
-  _applyInitialGainRange() {
-    const gainMin = this.getAttribute('gain-min');
-    const gainMax = this.getAttribute('gain-max');
-    if (gainMin !== null || gainMax !== null) {
-      const min = gainMin !== null ? parseFloat(gainMin) : Defaults.GAIN_MIN;
-      const max = gainMax !== null ? parseFloat(gainMax) : Defaults.GAIN_MAX;
-      this._renderer._mapper.setGainRange(min, max);
-    }
+  _applyGainRange() {
+    if (!this._renderer) return;
+    const min = this.hasAttribute('gain-min')
+      ? finiteNumber(this.getAttribute('gain-min'), 'gain-min')
+      : Defaults.GAIN_MIN;
+    const max = this.hasAttribute('gain-max')
+      ? finiteNumber(this.getAttribute('gain-max'), 'gain-max')
+      : Defaults.GAIN_MAX;
+    if (min >= max) throw invalidParameter('gain-min must be smaller than gain-max');
+    this._renderer._mapper.setGainRange(min, max);
+    this._renderer.markDirty();
   }
 
-  // ========== Teardown ==========
-
-  _teardownResizeObserver() {
-    if (this._resizeObserver) {
-      this._resizeObserver.disconnect();
-      this._resizeObserver = null;
-    }
+  _updateFrequencyRange() {
+    if (!this._model || !this._curveEngine || !this._renderer) return;
+    const nyquist = this._model.nyquistFrequency();
+    const min = this._frequencyRange?.min ?? Defaults.FREQ_MIN;
+    const max = Math.min(this._frequencyRange?.max ?? Defaults.FREQ_MAX, nyquist);
+    if (max <= min) throw invalidParameter('visible frequency range exceeds Nyquist');
+    this._curveEngine.setFreqRange(min, max);
+    this._renderer._mapper.setFreqRange(min, max);
   }
 
-  _teardownDragController() {
-    if (this._dragController) {
-      this._dragController.detach();
-      this._dragController = null;
-    }
+  _onSampleRateChange() {
+    this._updateFrequencyRange();
+    this._recomputeCurve();
   }
-
-  _teardownRenderer() {
-    if (this._renderer) {
-      this._renderer.destroy();
-      this._renderer = null;
-    }
-  }
-
-  _teardownModel() {
-    if (this._model) {
-      for (const name of MODEL_EVENTS) {
-        this._model.removeEventListener(name, this._forwardModelEvent);
-      }
-      for (const name of CURVE_TRIGGERS) {
-        this._model.removeEventListener(name, this._onCurveTrigger);
-      }
-      this._model = null;
-    }
-    this._curveEngine = null;
-  }
-
-  // ========== Attribute → Property ==========
-
-  _attributeToProperty(name, value) {
-    switch (name) {
-      case 'sample-rate':
-        if (this._model) this._model.setSampleRate(parseInt(value, 10));
-        break;
-      case 'curve-color':
-        if (this._renderer) this._renderer.setTheme({ curveColor: value });
-        break;
-      case 'background-color':
-        if (this._renderer) this._renderer.setTheme({ background: value });
-        break;
-      case 'band-color':
-        if (this._renderer) this._renderer.setTheme({ bandFill: value });
-        break;
-      case 'gain-min':
-        if (this._renderer && value !== null) {
-          const min = parseFloat(value);
-          const max = this._renderer._mapper.gainMax;
-          this._renderer._mapper.setGainRange(min, max);
-          this._recomputeCurve();
-        }
-        break;
-      case 'gain-max':
-        if (this._renderer && value !== null) {
-          const min = this._renderer._mapper.gainMin;
-          const max = parseFloat(value);
-          this._renderer._mapper.setGainRange(min, max);
-          this._recomputeCurve();
-        }
-        break;
-      case 'point-count':
-        if (this._curveEngine && value !== null) {
-          this._curveEngine.setPointCount(parseInt(value, 10));
-          this._recomputeCurve();
-        }
-        break;
-    }
-  }
-
-  // ========== Curve Computation ==========
 
   _onCurveTrigger() {
     this._recomputeCurve();
   }
-
   _recomputeCurve() {
     if (!this._curveEngine || !this._model || !this._renderer) return;
-
-    const totalCurve = this._curveEngine.computeTotalCurve(this._model);
-    this._renderer.setTotalCurve(totalCurve);
-
-    const focusedIdx = this._model.focusedBandIndex();
-    if (focusedIdx >= 0) {
-      const singleCurve = this._curveEngine.computeSingleBandCurve(focusedIdx, this._model);
-      this._renderer.setSingleBandCurve(focusedIdx, singleCurve);
+    this._renderer.setTotalCurve(this._curveEngine.computeTotalCurve(this._model));
+    const index = this._model.focusedBandIndex();
+    if (index >= 0) {
+      this._renderer.setSingleBandCurve(
+        index,
+        this._curveEngine.computeSingleBandCurve(index, this._model),
+      );
     } else {
       this._renderer.clearSingleBandCurve();
     }
   }
-
-  // ========== Event Forwarding ==========
-
-  _forwardModelEvent(e) {
-    this.dispatchEvent(new CustomEvent(e.type, { detail: e.detail }));
+  _forwardModelEvent(event) {
+    this.dispatchEvent(new CustomEvent(event.type, { detail: event.detail }));
   }
-
-  // ========== Public API: Band Management ==========
 
   get bandCount() {
-    return this._model ? this._model.bandCount() : 0;
+    return this._model?.bandCount() ?? Defaults.BAND_COUNT;
   }
-
   set bandCount(count) {
-    if (this._model) this._model.setBandCount(count);
+    this._model?.setBandCount(count);
   }
-
+  setBandCount(count) {
+    this.bandCount = count;
+  }
   bandAt(index) {
-    return this._model ? this._model.bandAt(index) : undefined;
+    return this._model?.bandAt(index);
   }
-
   allBands() {
-    return this._model ? this._model.allBands() : [];
+    return this._model?.allBands() ?? [];
   }
-
   addBand(params) {
-    return this._model ? this._model.addBand(params) : -1;
+    return this._model?.addBand(params) ?? -1;
   }
-
   removeBand(index) {
-    if (this._model) this._model.removeBand(index);
+    this._model?.removeBand(index);
   }
-
   setBandParams(index, params) {
-    if (this._model) this._model.setBandParams(index, params);
+    this._model?.setBandParams(index, params);
   }
-
-  // ========== Public API: Focus ==========
+  setBandFrequency(index, frequency) {
+    this.setBandParams(index, { frequency });
+  }
+  setBandGain(index, gain) {
+    this.setBandParams(index, { gain });
+  }
+  setBandQ(index, q) {
+    this.setBandParams(index, { q });
+  }
+  setBandType(index, type) {
+    this.setBandParams(index, { type });
+  }
+  setBandBypass(index, bypass) {
+    this.setBandParams(index, { bypass });
+  }
 
   get focusedBandIndex() {
-    return this._model ? this._model.focusedBandIndex() : -1;
+    return this._model?.focusedBandIndex() ?? -1;
   }
-
   set focusedBandIndex(index) {
-    if (this._model) this._model.setFocusedBandIndex(index);
+    this._model?.setFocusedBandIndex(index);
   }
-
-  // ========== Public API: Z-Order ==========
-
+  setFocusedBandIndex(index) {
+    this.focusedBandIndex = index;
+  }
   moveBandZOrder(fromIndex, toIndex) {
-    if (this._model) this._model.moveBandZOrder(fromIndex, toIndex);
+    this._model?.moveBandZOrder(fromIndex, toIndex);
   }
-
-  // ========== Public API: Sample Rate ==========
 
   get sampleRate() {
-    return this._model ? this._model.sampleRate() : Defaults.SAMPLE_RATE;
+    return (
+      this._model?.sampleRate() ??
+      (this.hasAttribute('sample-rate')
+        ? this._validSampleRate(this.getAttribute('sample-rate'))
+        : Defaults.SAMPLE_RATE)
+    );
   }
-
-  set sampleRate(rate) {
-    if (this._model) {
-      this._model.setSampleRate(rate);
-      this.setAttribute('sample-rate', String(rate));
+  set sampleRate(value) {
+    const rate = this._validSampleRate(value);
+    if (this._frequencyRange && this._frequencyRange.max > rate / 2) {
+      throw invalidParameter('visible frequency range exceeds Nyquist');
     }
+    this._model?.setSampleRate(rate);
+    this._reflect('sample-rate', rate);
   }
-
-  // ========== Public API: LPF / HPF ==========
+  setSampleRate(rate) {
+    this.sampleRate = rate;
+  }
+  nyquistFrequency() {
+    return this.sampleRate / 2;
+  }
 
   get lpf() {
-    return this._model
-      ? this._model.getLpf()
-      : { frequency: Defaults.LPF_FREQ_DEFAULT, enabled: false };
+    return this._model?.getLpf() ?? { frequency: Defaults.LPF_FREQ_DEFAULT, enabled: false };
   }
-
   set lpf(params) {
-    if (this._model) this._model.setLpf(params);
+    this._model?.setLpf(params);
+  }
+  getLpf() {
+    return this.lpf;
+  }
+  isLpfEnabled() {
+    return this.lpf.enabled;
+  }
+  setLpfEnabled(enabled) {
+    this._model?.setLpfEnabled(enabled);
+  }
+  setLpfFrequency(frequency) {
+    this._model?.setLpfFrequency(frequency);
   }
 
   get hpf() {
-    return this._model
-      ? this._model.getHpf()
-      : { frequency: Defaults.HPF_FREQ_DEFAULT, enabled: false };
+    return this._model?.getHpf() ?? { frequency: Defaults.HPF_FREQ_DEFAULT, enabled: false };
   }
-
   set hpf(params) {
-    if (this._model) this._model.setHpf(params);
+    this._model?.setHpf(params);
   }
-
-  // ========== Public API: Q Range ==========
+  getHpf() {
+    return this.hpf;
+  }
+  isHpfEnabled() {
+    return this.hpf.enabled;
+  }
+  setHpfEnabled(enabled) {
+    this._model?.setHpfEnabled(enabled);
+  }
+  setHpfFrequency(frequency) {
+    this._model?.setHpfFrequency(frequency);
+  }
 
   setQRange(filterType, min, max) {
-    if (this._model) this._model.setQRange(filterType, min, max);
+    this._model?.setQRange(filterType, min, max);
   }
-
   qRange(filterType) {
-    return this._model
-      ? this._model.qRange(filterType)
-      : { min: 0.4, max: 128.0 };
+    return this._model?.qRange(filterType) ?? { min: 0.4, max: 128 };
   }
-
-  // ========== Public API: Gain Range ==========
 
   get gainMin() {
-    return this._renderer
-      ? this._renderer._mapper.gainMin
-      : Defaults.GAIN_MIN;
+    return (
+      this._renderer?._mapper.gainMin ??
+      (this.hasAttribute('gain-min') ? Number(this.getAttribute('gain-min')) : Defaults.GAIN_MIN)
+    );
   }
-
+  set gainMin(value) {
+    this.setGainRange(value, this.gainMax);
+  }
   get gainMax() {
-    return this._renderer
-      ? this._renderer._mapper.gainMax
-      : Defaults.GAIN_MAX;
+    return (
+      this._renderer?._mapper.gainMax ??
+      (this.hasAttribute('gain-max') ? Number(this.getAttribute('gain-max')) : Defaults.GAIN_MAX)
+    );
   }
-
-  // ========== Public API: Theme ==========
-
-  setTheme(partial) {
-    if (this._renderer) this._renderer.setTheme(partial);
+  set gainMax(value) {
+    this.setGainRange(this.gainMin, value);
   }
-
-  // ========== Public API: Re-render ==========
-
-  renderNow() {
-    if (this._renderer) this._renderer.renderNow();
+  setGainRange(minValue, maxValue) {
+    const min = finiteNumber(minValue, 'gain-min');
+    const max = finiteNumber(maxValue, 'gain-max');
+    if (min >= max) throw invalidParameter('gain-min must be smaller than gain-max');
+    this._reflecting = true;
+    try {
+      this.setAttribute('gain-min', String(min));
+      this.setAttribute('gain-max', String(max));
+    } finally {
+      this._reflecting = false;
+    }
+    this._applyGainRange();
   }
-
-  // ========== Public API: Point Count ==========
 
   get pointCount() {
-    return this._curveEngine
-      ? this._curveEngine._pointCount
-      : Defaults.POINT_COUNT;
+    return (
+      this._curveEngine?._pointCount ??
+      (this.hasAttribute('point-count')
+        ? Number(this.getAttribute('point-count'))
+        : Defaults.POINT_COUNT)
+    );
+  }
+  set pointCount(value) {
+    const count = this._validPointCount(value);
+    this._curveEngine?.setPointCount(count);
+    this._recomputeCurve();
+    this._reflect('point-count', count);
+  }
+  setCurvePointCount(count) {
+    this.pointCount = count;
+  }
+  curvePointCount() {
+    return this.pointCount;
   }
 
-  set pointCount(count) {
-    if (this._curveEngine) {
-      this._curveEngine.setPointCount(count);
-      this._recomputeCurve();
-      this.setAttribute('point-count', String(count));
+  _setColor(name, color) {
+    if (typeof color !== 'string' || !color.trim())
+      throw invalidParameter(`${name} must be a color string`);
+    this._reflect(name, color.trim());
+    this._syncTheme();
+  }
+  get curveColor() {
+    return (
+      this.getAttribute('curve-color') ?? this._renderer?._theme.curveColor ?? Theme.curveColor
+    );
+  }
+  set curveColor(color) {
+    this._setColor('curve-color', color);
+  }
+  get backgroundColor() {
+    return (
+      this.getAttribute('background-color') ?? this._renderer?._theme.background ?? Theme.background
+    );
+  }
+  set backgroundColor(color) {
+    this._setColor('background-color', color);
+  }
+  get bandColor() {
+    return this.getAttribute('band-color') ?? this._renderer?._theme.bandFill ?? Theme.bandFill;
+  }
+  set bandColor(color) {
+    this._setColor('band-color', color);
+  }
+  setCurveColor(color) {
+    this.curveColor = color;
+  }
+  setBackgroundColor(color) {
+    this.backgroundColor = color;
+  }
+  setTheme(partial) {
+    this._themeOverrides = { ...this._themeOverrides, ...partial };
+    this._syncTheme();
+  }
+  renderNow() {
+    this._renderer?.renderNow();
+  }
+
+  setFrequencyVisibleRange(minValue, maxValue) {
+    const min = finiteNumber(minValue, 'freq-min');
+    const max = finiteNumber(maxValue, 'freq-max');
+    if (min <= 0 || min >= max || max > this.nyquistFrequency()) {
+      throw invalidParameter('invalid visible frequency range');
     }
+    this._frequencyRange = { min, max };
+    this._updateFrequencyRange();
+    this._recomputeCurve();
   }
-
-  // ========== Public API: Reset ==========
 
   reset() {
-    if (this._model) {
-      this._model.setBandCount(Defaults.BAND_COUNT);
-      this._model.setSampleRate(Defaults.SAMPLE_RATE);
-      this._model.setLpf({ frequency: Defaults.LPF_FREQ_DEFAULT, enabled: false });
-      this._model.setHpf({ frequency: Defaults.HPF_FREQ_DEFAULT, enabled: false });
-      this._model.setFocusedBandIndex(-1);
-    }
+    if (!this._model) return;
+    this._frequencyRange = null;
+    this._model.reset();
+    this.sampleRate = Defaults.SAMPLE_RATE;
+    this.pointCount = Defaults.POINT_COUNT;
+    this._updateFrequencyRange();
+    this._recomputeCurve();
   }
 }

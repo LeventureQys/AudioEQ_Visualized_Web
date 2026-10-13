@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 
 describe('AudioEQElement', () => {
   beforeAll(async () => {
@@ -141,6 +141,82 @@ describe('AudioEQElement', () => {
     expect(el.sampleRate / 2).toBe(24000);
     el.sampleRate = 96000;
     expect(el.sampleRate / 2).toBe(48000);
+    document.body.removeChild(el);
+  });
+
+  it('reflects appearance and numeric attributes in both directions', async () => {
+    const el = await createReadyElement();
+    el.curveColor = '#ab9900';
+    el.backgroundColor = '#101010';
+    el.bandColor = '#efefef';
+    el.setGainRange(-30, 18);
+    el.setCurvePointCount(250);
+    expect(el.getAttribute('curve-color')).toBe('#ab9900');
+    expect(el.getAttribute('background-color')).toBe('#101010');
+    expect(el.getAttribute('band-color')).toBe('#efefef');
+    expect(el.getAttribute('gain-min')).toBe('-30');
+    expect(el.gainMax).toBe(18);
+    expect(el.pointCount).toBe(250);
+    el.removeAttribute('gain-min');
+    el.removeAttribute('curve-color');
+    el.removeAttribute('point-count');
+    expect(el.gainMin).toBe(-24);
+    expect(el.curveColor).toBe('#F0A030');
+    expect(el.pointCount).toBe(500);
+    document.body.removeChild(el);
+  });
+
+  it('provides independent filters and resets edited bands', async () => {
+    const el = await createReadyElement();
+    el.setBandGain(0, 8);
+    el.setLpfEnabled(true);
+    el.setHpfFrequency(80);
+    expect(el.isLpfEnabled()).toBe(true);
+    expect(el.getHpf().frequency).toBe(80);
+    expect(el.nyquistFrequency()).toBe(24000);
+    el.reset();
+    expect(el.bandAt(0).gain).toBe(0);
+    expect(el.isLpfEnabled()).toBe(false);
+    expect(el.getHpf().frequency).toBe(20);
+    document.body.removeChild(el);
+  });
+
+  it('survives disconnect and reconnect before initialization', async () => {
+    const el = document.createElement('audio-eq');
+    document.body.appendChild(el);
+    document.body.removeChild(el);
+    document.body.appendChild(el);
+    await Promise.resolve();
+    expect(el.bandCount).toBe(5);
+    expect(el._initialized).toBe(true);
+    document.body.removeChild(el);
+  });
+
+  it('coalesces pointer moves and forwards band-dragged', async () => {
+    const el = await createReadyElement();
+    const canvas = el.shadowRoot.querySelector('canvas');
+    const mapper = el._renderer._mapper;
+    el._renderer.resize(600, 300);
+    const band = el.bandAt(0);
+    const x = mapper.freqToX(band.frequency);
+    const y = mapper.gainToY(band.gain);
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0 });
+    canvas.setPointerCapture = vi.fn();
+    canvas.releasePointerCapture = vi.fn();
+    const event = (type, clientX, clientY) => {
+      const pointer = new Event(type, { bubbles: true });
+      Object.assign(pointer, { pointerId: 1, clientX, clientY });
+      canvas.dispatchEvent(pointer);
+    };
+    const dragged = vi.fn();
+    el.addEventListener('band-dragged', dragged);
+    event('pointerdown', x, y);
+    event('pointermove', x + 10, y - 5);
+    event('pointermove', x + 30, y - 15);
+    expect(dragged).not.toHaveBeenCalled();
+    event('pointerup', x + 30, y - 15);
+    expect(dragged).toHaveBeenCalledTimes(1);
+    expect(el.bandAt(0).gain).toBeGreaterThan(band.gain);
     document.body.removeChild(el);
   });
 

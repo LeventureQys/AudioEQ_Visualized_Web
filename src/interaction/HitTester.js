@@ -39,7 +39,7 @@ export class HitTester {
     }
 
     // Check other bands
-    for (const band of allBands) {
+    for (const band of [...allBands].reverse()) {
       if (band.index === focusedIdx) continue;
       const bx = this._mapper.freqToX(band.frequency);
       const by = this._mapper.gainToY(band.gain);

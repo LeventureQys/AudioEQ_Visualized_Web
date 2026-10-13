@@ -6,7 +6,7 @@ import { CoordinateMapper } from './core/CoordinateMapper.js';
 import * as ButterworthIIR from './core/filter/ButterworthIIR.js';
 import * as Types from './core/types.js';
 
-if (typeof window !== 'undefined' && typeof customElements !== 'undefined') {
+if (typeof window !== 'undefined' && typeof customElements !== 'undefined' && !customElements.get('audio-eq')) {
   customElements.define('audio-eq', AudioEQElement);
 }
 
@@ -14,4 +14,4 @@ export { AudioEQElement };
 export { EqualizerModel, CurveEngine, CoordinateMapper };
 export { ButterworthIIR, Types };
 
-export const AudioEQCore = { EqualizerModel, CurveEngine, CoordinateMapper };
+export const AudioEQCore = { EqualizerModel, CurveEngine, CoordinateMapper, ButterworthIIR, ...Types };

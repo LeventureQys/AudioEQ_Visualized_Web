@@ -19,6 +19,9 @@ export class DragController extends EventTarget {
     this._theme = theme;
     this._dragging = null;
     this._attached = false;
+    this._moveFrame = null;
+    this._pendingMove = null;
+    this._lastMove = null;
 
     this._onPointerDown = this._onPointerDown.bind(this);
     this._onPointerMove = this._onPointerMove.bind(this);
@@ -47,6 +50,10 @@ export class DragController extends EventTarget {
     this._canvas.removeEventListener('pointerup', this._onPointerUp);
     this._canvas.removeEventListener('pointercancel', this._onPointerCancel);
     this._canvas.style.touchAction = '';
+    if (this._moveFrame !== null) cancelAnimationFrame(this._moveFrame);
+    this._moveFrame = null;
+    this._pendingMove = null;
+    this._dragging = null;
     this._attached = false;
   }
 
@@ -59,6 +66,7 @@ export class DragController extends EventTarget {
     const cssY = e.clientY - rect.top;
 
     const hit = this._hitTester.hitTest(cssX, cssY);
+    this._lastMove = null;
 
     if (hit.kind === 'band') {
       this._model.setFocusedBandIndex(hit.index);
@@ -110,6 +118,20 @@ export class DragController extends EventTarget {
       delete this._dragging.pending;
     }
 
+    this._pendingMove = { cssX, cssY };
+    if (this._moveFrame === null) {
+      this._moveFrame = requestAnimationFrame(() => {
+        this._moveFrame = null;
+        this._flushMove();
+      });
+    }
+  }
+
+  _flushMove() {
+    if (!this._dragging || !this._pendingMove) return;
+    const { cssX, cssY } = this._pendingMove;
+    this._pendingMove = null;
+    this._lastMove = { cssX, cssY };
     if (this._dragging.kind === 'band') {
       const freq = this._mapper.xToFreq(cssX);
       const gain = this._mapper.yToGain(cssY);
@@ -119,9 +141,11 @@ export class DragController extends EventTarget {
       });
       const band = this._model.bandAt(this._dragging.index);
       if (band) {
-        this.dispatchEvent(new CustomEvent('band-dragged', {
-          detail: { index: this._dragging.index, frequency: band.frequency, gain: band.gain },
-        }));
+        this.dispatchEvent(
+          new CustomEvent('band-dragged', {
+            detail: { index: this._dragging.index, frequency: band.frequency, gain: band.gain },
+          }),
+        );
       }
     } else if (this._dragging.kind === 'lpf') {
       const freq = this._mapper.xToFreq(cssX);
@@ -141,6 +165,27 @@ export class DragController extends EventTarget {
    */
   _onPointerUp(e) {
     if (!this._dragging) return;
+    if (this._moveFrame !== null) cancelAnimationFrame(this._moveFrame);
+    this._moveFrame = null;
+    if (!this._dragging.pending) {
+      if (this._pendingMove) {
+        const rect = this._canvas.getBoundingClientRect();
+        this._pendingMove = { cssX: e.clientX - rect.left, cssY: e.clientY - rect.top };
+        this._flushMove();
+      } else {
+        const rect = this._canvas.getBoundingClientRect();
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        if (
+          cssX !== (this._lastMove?.cssX ?? this._dragging.startX) ||
+          cssY !== (this._lastMove?.cssY ?? this._dragging.startY)
+        ) {
+          this._pendingMove = { cssX, cssY };
+          this._flushMove();
+        }
+      }
+    }
+    this._pendingMove = null;
     this._canvas.releasePointerCapture(e.pointerId);
     this._dragging = null;
   }
@@ -150,6 +195,9 @@ export class DragController extends EventTarget {
    */
   _onPointerCancel(e) {
     if (!this._dragging) return;
+    if (this._moveFrame !== null) cancelAnimationFrame(this._moveFrame);
+    this._moveFrame = null;
+    this._pendingMove = null;
     this._canvas.releasePointerCapture(e.pointerId);
     this._dragging = null;
   }
